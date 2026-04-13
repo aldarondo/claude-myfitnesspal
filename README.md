@@ -17,6 +17,11 @@ Uses **Playwright** under the hood to make requests through a real browser, bypa
 
 > **Note:** Logging food diary entries (adding what you ate) is not supported — MFP's API does not expose that write endpoint to third parties.
 
+## Configuration
+
+- **`playwright-session.json`** — path to the saved browser session. The file lives in the same directory as `mfp_server.py` (set by `_SESSION_FILE` in the server). Gitignored — never commit this file.
+- No other environment variables are required. The server runs entirely via the saved Playwright session.
+
 ## Setup
 
 ### 1. Install dependencies
@@ -54,6 +59,22 @@ python login.py
 A Chromium window will open. Log in to MyFitnessPal normally. Once you're redirected to your dashboard the session is saved to `playwright-session.json` and the window closes automatically.
 
 You won't need to do this again unless your MFP session expires (typically weeks to months). Just re-run `login.py` if tools start returning auth errors.
+
+## Running Tests
+
+Install test dependencies:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+Run tests:
+
+```bash
+pytest
+```
+
+Tests mock all Playwright and browser calls — no browser is launched and no MFP session is required.
 
 ## Usage
 
