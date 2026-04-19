@@ -7,13 +7,9 @@ Stable daily-use MCP connector — reliable session handling, all core read tool
 [Empty]
 
 ### 🟢 Ready (Next Up)
-- Verify session auto-refresh or add a re-login prompt when session expires
-- Document how to re-authenticate (run `login.py`) in a visible place
 
 ### 📋 Backlog
-- Add tool: log food entry (currently read-only for diary)
-- Add tool: get weekly nutrition trends
-- Improve error messages when session is expired vs. network error
+- [x] `[Code]` 2026-04-19 — Add tool: get_weekly_trends — 7-day calorie + macro averages, per-day vs goal, best/worst day; API call + page-scrape fallback
 - Add tool: search exercises / log exercise
 - Investigate MFP selector stability — scraping can break on UI changes
 
@@ -26,3 +22,8 @@ Stable daily-use MCP connector — reliable session handling, all core read tool
 - Write tool: log body measurements
 - Session persistence via `playwright-session.json`
 - pytest test suite with browser interaction mocking
+- `session_status()` MCP tool — check session validity before running other tools (2026-04-14)
+- Session expiry handling: clear RuntimeError messages in all tools with "Run login.py" instructions (2026-04-14)
+- Re-auth documentation in README (Step 3 + note in Usage section) (2026-04-14)
+- Fallback path tests for `get_weekly_summary` individual day fetches (2026-04-14)
+- Add tool: log food entry — POST to `/api/nutrition` with Playwright page-nav fallback, 8 unit tests (2026-04-19)

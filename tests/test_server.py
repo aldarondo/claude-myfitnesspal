@@ -232,6 +232,62 @@ class TestGetWeeklySummary:
 # log_measurement
 # ---------------------------------------------------------------------------
 
+class TestGetWeeklySummaryFallback:
+    def test_falls_back_to_individual_day_fetches_on_non_json(self, mock_ctx, mock_token):
+        # API returns non-JSON (e.g. HTML), so server should fetch each of 7 days
+        mock_ctx.request.get.return_value = _make_response(
+            ok=True, content_type="text/html", text="<html></html>"
+        )
+        next_data = {"props": {"pageProps": {"meals": []}}}
+        page = MagicMock()
+        page.evaluate.return_value = next_data
+        mock_ctx.new_page.return_value = page
+
+        result = mfp_server.get_weekly_summary("2024-01-01")
+        parsed = json.loads(result)
+
+        assert "days" in parsed
+        assert len(parsed["days"]) == 7
+        assert parsed["days"][0]["date"] == "2024-01-01"
+        assert parsed["days"][6]["date"] == "2024-01-07"
+
+    def test_returns_error_json_on_exception(self, mock_ctx, mock_token):
+        mock_ctx.request.get.side_effect = Exception("network failure")
+        result = mfp_server.get_weekly_summary("2024-01-01")
+        parsed = json.loads(result)
+        assert "error" in parsed
+        assert "network failure" in parsed["error"]
+
+
+class TestSessionStatus:
+    def test_returns_valid_when_token_fetch_succeeds(self, mock_ctx, mocker):
+        mocker.patch("mfp_server._get_bearer_token", return_value="test-token")
+        result = mfp_server.session_status()
+        parsed = json.loads(result)
+        assert parsed["status"] == "valid"
+
+    def test_returns_expired_on_runtime_error(self, mock_ctx, mocker):
+        mocker.patch(
+            "mfp_server._get_bearer_token",
+            side_effect=RuntimeError("MFP auth failed (HTTP 401). Run login.py to re-authenticate."),
+        )
+        result = mfp_server.session_status()
+        parsed = json.loads(result)
+        assert parsed["status"] == "expired"
+        assert "instructions" in parsed
+        assert "login.py" in parsed["instructions"]
+
+    def test_returns_unknown_on_unexpected_error(self, mock_ctx, mocker):
+        mocker.patch(
+            "mfp_server._get_bearer_token",
+            side_effect=ConnectionError("socket timeout"),
+        )
+        result = mfp_server.session_status()
+        parsed = json.loads(result)
+        assert parsed["status"] == "unknown"
+        assert "instructions" in parsed
+
+
 class TestLogMeasurement:
     def test_posts_to_right_url_with_correct_payload(self, mock_ctx, mock_token):
         mock_ctx.request.post.return_value = _make_response(ok=True)
@@ -260,3 +316,106 @@ class TestLogMeasurement:
         parsed = json.loads(result)
         assert parsed["status"] == "error"
         assert parsed["http_status"] == 422
+
+
+# ---------------------------------------------------------------------------
+# log_food_entry
+# ---------------------------------------------------------------------------
+
+# Minimal search result that search_foods would return
+_SEARCH_BODY = json.dumps({
+    "items": [{
+        "id": "98765",
+        "description": "Chicken Breast",
+        "servings": [{"unit": "oz"}],
+        "nutritional_contents": {"energy": {"value": 165}},
+    }]
+})
+
+
+class TestLogFoodEntry:
+    def _patch_search(self, mocker, body=_SEARCH_BODY):
+        mocker.patch("mfp_server.search_foods", return_value=body)
+
+    def test_posts_correct_payload_to_nutrition_endpoint(self, mock_ctx, mock_token, mocker):
+        self._patch_search(mocker)
+        mock_ctx.request.post.return_value = _make_response(ok=True)
+        mfp_server.log_food_entry("Chicken Breast", meal="Dinner", quantity=4.0, unit="oz", date="2024-01-15")
+        call_args = mock_ctx.request.post.call_args
+        url = call_args[0][0] if call_args[0] else call_args.args[0]
+        assert "/api/nutrition" in url
+        data = json.loads(call_args.kwargs.get("data") or call_args[1].get("data"))
+        entry = data["food_entries"][0]
+        assert entry["food_id"] == "98765"
+        assert entry["meal_entry_name"] == "Dinner"
+        assert entry["quantity"] == 4.0
+        assert entry["unit_name"] == "oz"
+        assert entry["date"] == "2024-01-15"
+
+    def test_returns_success_json_with_food_and_calories(self, mock_ctx, mock_token, mocker):
+        self._patch_search(mocker)
+        mock_ctx.request.post.return_value = _make_response(ok=True)
+        result = mfp_server.log_food_entry("Chicken Breast", date="2024-01-15")
+        parsed = json.loads(result)
+        assert parsed["status"] == "ok"
+        assert parsed["food"] == "Chicken Breast"
+        assert parsed["calories"] == 165
+        assert parsed["meal"] == "Lunch"
+
+    def test_defaults_unit_from_search_result(self, mock_ctx, mock_token, mocker):
+        self._patch_search(mocker)
+        mock_ctx.request.post.return_value = _make_response(ok=True)
+        result = mfp_server.log_food_entry("Chicken Breast", date="2024-01-15")
+        parsed = json.loads(result)
+        assert parsed["unit"] == "oz"
+
+    def test_returns_error_when_no_foods_found(self, mock_ctx, mock_token, mocker):
+        mocker.patch("mfp_server.search_foods", return_value=json.dumps({"items": []}))
+        result = mfp_server.log_food_entry("xyzzy unknown food", date="2024-01-15")
+        parsed = json.loads(result)
+        assert parsed["status"] == "error"
+        assert "No foods found" in parsed["detail"]
+
+    def test_returns_error_when_search_fails(self, mock_ctx, mock_token, mocker):
+        mocker.patch("mfp_server.search_foods", return_value=json.dumps({"error": "Search failed: HTTP 500"}))
+        result = mfp_server.log_food_entry("Chicken Breast", date="2024-01-15")
+        parsed = json.loads(result)
+        assert parsed["status"] == "error"
+
+    def test_falls_back_to_page_nav_on_api_failure(self, mock_ctx, mock_token, mocker):
+        self._patch_search(mocker)
+        # API POST fails
+        mock_ctx.request.post.return_value = _make_response(
+            ok=False, status=403, content_type="text/plain", text="Forbidden"
+        )
+        # Page fallback returns ok
+        page = MagicMock()
+        page.evaluate.return_value = {"ok": True, "status": 200, "body": "{}"}
+        mock_ctx.new_page.return_value = page
+
+        result = mfp_server.log_food_entry("Chicken Breast", date="2024-01-15")
+        parsed = json.loads(result)
+        assert parsed["status"] == "ok"
+        assert parsed.get("method") == "page_fallback"
+
+    def test_returns_error_when_both_api_and_fallback_fail(self, mock_ctx, mock_token, mocker):
+        self._patch_search(mocker)
+        mock_ctx.request.post.return_value = _make_response(
+            ok=False, status=403, content_type="text/plain", text="Forbidden"
+        )
+        page = MagicMock()
+        page.evaluate.return_value = {"ok": False, "status": 403, "body": "Forbidden"}
+        mock_ctx.new_page.return_value = page
+
+        result = mfp_server.log_food_entry("Chicken Breast", date="2024-01-15")
+        parsed = json.loads(result)
+        assert parsed["status"] == "error"
+        assert "api_status" in parsed
+
+    def test_returns_error_on_exception(self, mock_ctx, mock_token, mocker):
+        self._patch_search(mocker)
+        mock_ctx.request.post.side_effect = Exception("connection refused")
+        result = mfp_server.log_food_entry("Chicken Breast", date="2024-01-15")
+        parsed = json.loads(result)
+        assert parsed["status"] == "error"
+        assert "connection refused" in parsed["detail"]

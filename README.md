@@ -9,6 +9,7 @@ Uses **Playwright** under the hood to make requests through a real browser, bypa
 | Tool | Type | Description |
 |------|------|-------------|
 | `login` | Auth | Open a browser to log in and save your session (run once) |
+| `session_status` | Auth | Check whether the current session is valid (useful before other calls) |
 | `get_diary` | Read | Food diary for a specific date — meals, entries, macros, goals |
 | `get_measurements` | Read | Body measurements over a date range (weight, waist, etc.) |
 | `search_foods` | Read | Search the MFP food database |

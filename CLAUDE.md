@@ -32,3 +32,7 @@ MCP connector that bridges Claude to a MyFitnessPal account. Uses Playwright to 
 
 ---
 @~/Documents/GitHub/CLAUDE.md
+
+## Git Rules
+- Never create pull requests. Push directly to main.
+- solo/auto-push OK
